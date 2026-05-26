@@ -9,6 +9,7 @@ import java.util.List;
 import java.util.Random;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicInteger;
 
@@ -24,8 +25,16 @@ public class Board extends JPanel {
     private float openTwo = .1f*.413f;
     private float center = .1f*.0167f;
 
+    // multi threading for book optimizations
+    private static ThreadPoolExecutor pool =
+            (ThreadPoolExecutor) Executors.newFixedThreadPool(
+                    Runtime.getRuntime().availableProcessors()-2
+            );
+    private static final int threads = Runtime.getRuntime().availableProcessors()-2;
+    private static AtomicInteger pendingTasks = new AtomicInteger();
     // depth setting for minimax
-    private static final int maxDepth = 10;
+    private static final int maxDepth = 12;
+    private static int bookDepth;
 
     // neural network
     private static Network network;
@@ -35,9 +44,10 @@ public class Board extends JPanel {
     }
 
     // book moves
-    static Book book;
+    private static Book book;
+    private Book transpositionTable;
     static {
-        book = new Book();
+        book = new Book("book.txt");
     }
 
     // zobrist hashing
@@ -67,6 +77,7 @@ public class Board extends JPanel {
         hash = 0;
         posX = -100;
         posY = -100;
+        transpositionTable = new Book();
     }
 
     public Board(Board other) {
@@ -75,6 +86,7 @@ public class Board extends JPanel {
         this.redMove = other.redMove;
         this.outcome = other.outcome;
         this.hash = other.hash;
+        this.transpositionTable = other.transpositionTable;
     }
 
     // play move
@@ -229,7 +241,10 @@ public class Board extends JPanel {
         frame.setVisible(true);
 
         // bot first move if it is red
-        if (!startRed) botTurn(redMove);
+        if (!startRed) {
+            botTurn(redMove);
+            paintImmediately(getBounds());
+        }
         addMouseListener(new MouseAdapter() {
             @Override
             public void mouseClicked(MouseEvent e) {
@@ -262,7 +277,7 @@ public class Board extends JPanel {
 
         while (true) {
             try {
-                Thread.sleep(1);
+                Thread.sleep(500);
             } catch (Exception e) {} //sleepin
             botTurn(redMove);
             paintImmediately(getBounds());
@@ -270,7 +285,7 @@ public class Board extends JPanel {
                 break;
             }
             try {
-                Thread.sleep(1);
+                Thread.sleep(500);
             } catch (Exception e) {} //sleepin
             botTurn(redMove);
             paintImmediately(getBounds());
@@ -280,6 +295,12 @@ public class Board extends JPanel {
         }
     }
     private void botTurn(boolean isRed) {
+        BookEntry bookMove = book.getOrNull(toShallowBookEntry());
+        if (bookMove != null) {
+            System.out.println("BOOK MOVE!");
+            placeTile(bookMove.move);
+            return;
+        }
         int bestMove = -1;
         float bestScore = Float.NEGATIVE_INFINITY;
 
@@ -307,46 +328,77 @@ public class Board extends JPanel {
     }
 
     private float minimax(int depth, boolean maximizing, boolean isRed, float alpha, float beta) {
-        List<Integer> legal = legalMoves();
-
         if (outcome != 0) { // result of ended game adjusted to minimize depth
             return (outcome == ((isRed) ? 1 : -1)) ? 1-(maxDepth-depth)/1000f : -1+(maxDepth-depth)/1000f;
-        } else if (depth == 0) {
+        }
+        BookEntry be = transpositionTable.getOrNull(toShallowBookEntry());
+        if (be != null && be.depth >= depth) {
+            return be.confidence;
+        }
+        if (depth == 0) {
             return evaluate(isRed); // handcrafted not ending leaf node
-        } else if (legal.isEmpty()) {
+        }
+        List<Integer> legal = legalMoves();
+        if (legal.isEmpty()) {
             return 0; // draw
         }
-
+        boolean exact = true;
         if (maximizing) {
-            float best = Float.NEGATIVE_INFINITY;
+            float bestScore = Float.NEGATIVE_INFINITY;
+            int bestMove = -1;
             for (int move : legal) {
                 placeTile(move);
                 float score = minimax(depth - 1, false, isRed, alpha, beta);
                 undoMove(move);
 
-                best = Math.max(best, score);
-                alpha = Math.max(alpha, best);
+                if (bestScore < score) {
+                    bestScore = score;
+                    bestMove = move;
+                }
+                alpha = Math.max(alpha, bestScore);
 
                 if (beta <= alpha) {
+                    exact = false;
                     break; // beta
                 }
             }
-            return best;
+            if (exact) {
+                be = transpositionTable.getOrNull(toShallowBookEntry()); // race condition;
+                if (be == null) {
+                    transpositionTable.put(toDeepBookEntry(depth,bestMove,bestScore));
+                } else if (be.depth < depth) {
+                    transpositionTable.replace(toDeepBookEntry(depth,bestMove,bestScore));
+                }
+            }
+            return bestScore;
         } else {
-            float best = Float.POSITIVE_INFINITY;
+            float bestScore = Float.POSITIVE_INFINITY;
+            int bestMove = -1;
             for (int move : legal) {
                 placeTile(move);
                 float score = minimax(depth - 1, true, isRed, alpha, beta);
                 undoMove(move);
 
-                best = Math.min(best, score);
-                beta = Math.min(beta, best);
+                if (bestScore > score) {
+                    bestScore = score;
+                    bestMove = move;
+                }
+                beta = Math.min(beta, bestScore);
 
                 if (beta <= alpha) {
+                    exact = false;
                     break; // alpha
                 }
             }
-            return best;
+            if (exact) {
+                be = transpositionTable.getOrNull(toShallowBookEntry()); // race condition
+                if (be == null) {
+                    transpositionTable.put(toDeepBookEntry(depth,bestMove,bestScore));
+                } else if (be.depth < depth) {
+                    transpositionTable.replace(toDeepBookEntry(depth,bestMove,bestScore));
+                }
+            }
+            return bestScore;
         }
     }
     public List<Integer> legalMoves() {
@@ -474,60 +526,93 @@ public class Board extends JPanel {
 
         return data;
     }
-    public BookEntry toBookEntry(int depth) {
-        return new BookEntry(hash,red,yellow,depth);
+    public BookEntry toShallowBookEntry() {
+        return new BookEntry(hash,red,yellow,0,0,0.0f);
     }
-    static AtomicInteger cnt = new AtomicInteger();
-    public void generateBook(int depth) {
-        List<Integer> moves = legalMoves();
-        if (depth >= 7) return;
-        else {
-            int c = cnt.incrementAndGet();
-            if ((c & 1023) == 0) System.out.println(c);
-            if (outcome != 0) return;
-            else if (moves.isEmpty()) return;
-        }
-        //System.out.println(depth);
-        BookEntry entry = toBookEntry(depth);
+    public BookEntry toDeepBookEntry(int depth, int move, float confidence) {
+        return new BookEntry(hash,red,yellow,depth, move, confidence);
+    }
 
-        // Skip if already explored
-        if (book.containsKey(entry)) return;
-        book.putIfAbsent(entry,getBookMove(redMove));
-
-        // Only parallelize root level
-        if (depth == 0) {
-            ExecutorService pool = Executors.newFixedThreadPool(
-                    Runtime.getRuntime().availableProcessors()
-            );
-
-            for (int move : moves) {
-                Board copy = new Board(this);
-
-                pool.submit(() -> {
-                    copy.placeTile(move);
-                    copy.generateBook(depth + 1);
-                });
-            }
-
-            pool.shutdown();
-
+    static AtomicInteger cnt;
+    public void generateBook(int toDepth) {
+        cnt = new AtomicInteger();
+        bookDepth = toDepth;
+        pendingTasks.set(1);
+        pool.submit(() -> {
             try {
-                pool.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
+                genBook(0);
+            } finally {
+                pendingTasks.decrementAndGet();
+            }
+        });
+
+        // wait until no tasks remain
+        while (pendingTasks.get() > 0) {
+            try {
+                Thread.sleep(100);
             } catch (InterruptedException e) {
                 e.printStackTrace();
             }
+        }
 
-            return;
+        pool.shutdown();
+
+        try {
+            pool.awaitTermination(Long.MAX_VALUE, TimeUnit.NANOSECONDS);
+        } catch (InterruptedException e) {
+            e.printStackTrace();
+        }
+    }
+    private void genBook(int depth) {
+        List<Integer> moves = legalMoves();
+        if (depth > bookDepth) return;
+        else {
+            int c = cnt.incrementAndGet();
+            if ((c & 1023) == 0) {
+                Runtime rt = Runtime.getRuntime();
+                long used = (rt.totalMemory() - rt.freeMemory()) / (1024 * 1024);
+                long max  = rt.maxMemory() / (1024 * 1024);
+
+                System.out.println(
+                        "nodes=" + cnt.get()
+                                + " TT=" + transpositionTable.size()
+                                + " mem=" + used + "/" + max + " MB"
+                                + " book=" + book.size()
+                                + " replaces=" + Book.replacements.get()
+                );
+            }
+            if (outcome != 0) return;
+            else if (moves.isEmpty()) return;
+        }
+
+        BookEntry entry = toShallowBookEntry();
+        if (!book.containsKey(entry)) { // only recurse to finish, don't minimax
+            book.put(entry);
+            BookEntry temp = getBookEntry(redMove);
+            book.put(temp);
         }
 
         // Normal recursive search
         for (int move : moves) {
-            placeTile(move);
-            generateBook(depth + 1);
-            undoMove(move);
+            if (depth < 4 && pool.getActiveCount() + pool.getQueue().size() < threads * 2) {
+                pendingTasks.incrementAndGet();
+                Board copy = new Board(this);
+                pool.submit(() -> {
+                    try {
+                        copy.placeTile(move);
+                        copy.genBook(depth + 1);
+                    } finally {
+                        pendingTasks.decrementAndGet();
+                    }
+                });
+            } else {
+                placeTile(move);
+                genBook(depth + 1);
+                undoMove(move);
+            }
         }
     }
-    private int getBookMove(boolean isRed) {
+    private BookEntry getBookEntry(boolean isRed) {
         int bestMove = -1;
         float bestScore = Float.NEGATIVE_INFINITY;
 
@@ -548,8 +633,7 @@ public class Board extends JPanel {
             // Update alpha for the root level
             alpha = Math.max(alpha, score);
         }
-
-        return bestMove;
+        return new BookEntry(hash,red,yellow,12,bestMove,bestScore);
     }
     public static void saveWeights() {
         network.write("weights.txt");

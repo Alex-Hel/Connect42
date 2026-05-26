@@ -5,11 +5,11 @@ public class main {
         Runtime.getRuntime().addShutdownHook(
                 new Thread(() -> {
                     System.out.println("Program stopping...");
-                    System.out.println((System.currentTimeMillis()-start)/1000.0/b.book.size()*130_000);
                     Board.saveWeights();
-                    Board.saveBook();
+                    //Board.saveBook();
+                    System.out.println(((System.currentTimeMillis()-start)/1000)/60 +" Minutes.");
                 })
         );
-        b.generateBook(0);
+        b.playAI(true);
     }
 }

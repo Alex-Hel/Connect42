@@ -43,7 +43,11 @@ public class Network {
     }
     public boolean write(String fileName) {
         try (PrintWriter out = new PrintWriter(new FileWriter(fileName))) {
-            out.print(this.toString());
+            out.print("Neural_Network!_with_this_many_layers-> "+layers.length+"\n");
+            out.print(alpha+"\n");
+            for (Layer L : layers) {
+                L.write(out);
+            }
             return true;
         } catch (IOException e) {
             e.printStackTrace();

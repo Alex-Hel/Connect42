@@ -1,3 +1,4 @@
+import java.io.PrintWriter;
 import java.util.Arrays;
 
 public class Layer {
@@ -88,14 +89,15 @@ public class Layer {
         return weights.clone();
     }
     public String toString() {
-        StringBuilder sb = new StringBuilder();
-        sb.append(weights[0].length+" "+weights.length+"\n");
+        return weights[0].length+" "+weights.length+"\n";
+    }
+    public void write(PrintWriter out) {
+        out.print(weights[0].length+" "+weights.length+"\n");
         for (int r=0; r<weights.length; r++) {
-            sb.append(Arrays.toString(weights[r]).replaceAll("[,\\[\\]]",""));
-            sb.append("\n");
+            out.print(Arrays.toString(weights[r]).replaceAll("[,\\[\\]]",""));
+            out.print("\n");
         }
-        sb.append(Arrays.toString(bias).replaceAll("[,\\[\\]]",""));
-        sb.append("\n");
-        return sb.toString();
+        out.print(Arrays.toString(bias).replaceAll("[,\\[\\]]",""));
+        out.print("\n");
     }
 }
