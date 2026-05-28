@@ -3,10 +3,8 @@ import java.awt.*;
 import java.awt.event.MouseAdapter;
 import java.awt.event.MouseEvent;
 import java.security.InvalidParameterException;
-import java.util.ArrayList;
-import java.util.Comparator;
+import java.util.*;
 import java.util.List;
-import java.util.Random;
 import java.util.concurrent.Executors;
 import java.util.concurrent.ThreadPoolExecutor;
 import java.util.concurrent.TimeUnit;
@@ -24,17 +22,6 @@ public class Board extends JPanel {
     private float openTwo = .1f*.413f;
     private float center = .1f*.0167f;
 
-    // multi threading for book optimizations
-    private static ThreadPoolExecutor pool =
-            (ThreadPoolExecutor) Executors.newFixedThreadPool(
-                    Runtime.getRuntime().availableProcessors()-2
-            );
-    private static final int threads = Runtime.getRuntime().availableProcessors()-2;
-    private static AtomicInteger pendingTasks = new AtomicInteger();
-    // depth setting for minimax
-    private static final int maxDepth = 12;
-    private static int bookDepth;
-
     // neural network
     private static Network network;
     static {
@@ -48,6 +35,15 @@ public class Board extends JPanel {
     static {
         book = new Book("book.txt");
     }
+    private static ThreadPoolExecutor pool =
+            (ThreadPoolExecutor) Executors.newFixedThreadPool(
+                    Runtime.getRuntime().availableProcessors()-2
+            );
+    private static final int threads = Runtime.getRuntime().availableProcessors()-2;
+    private static AtomicInteger pendingTasks = new AtomicInteger();
+    // depth setting for minimax
+    private static final int maxDepth = 12;
+    private static int bookDepth;
 
     // zobrist hashing
     private static final int key = 67;
@@ -64,6 +60,15 @@ public class Board extends JPanel {
         }
     }
 
+    // for move check ordering optimization
+    private int previousMove = 3;
+
+    // hold mirror board for pruning
+    private long mirrorRed;
+    private long mirrorYellow;
+
+    private long mirrorHash;
+
     // vfx
     private int posX;
     private int posY;
@@ -72,8 +77,11 @@ public class Board extends JPanel {
     public Board() {
         red = 0;
         yellow = 0;
-        redMove = true;
         hash = 0;
+        redMove = true;
+        mirrorRed = 0;
+        mirrorYellow = 0;
+        mirrorHash = 0;
         posX = -100;
         posY = -100;
         transpositionTable = new Book();
@@ -82,9 +90,12 @@ public class Board extends JPanel {
     public Board(Board other) {
         this.red = other.red;
         this.yellow = other.yellow;
+        this.hash = other.hash;
+        this.mirrorRed = other.mirrorRed;
+        this.mirrorYellow = other.mirrorYellow;
+        this.mirrorHash = other.mirrorHash;
         this.redMove = other.redMove;
         this.outcome = other.outcome;
-        this.hash = other.hash;
         this.transpositionTable = other.transpositionTable;
     }
 
@@ -92,45 +103,59 @@ public class Board extends JPanel {
     private boolean placeTile(int r) {
         long occupied = red | yellow;
         int base = (6 - r) * 7;
-
+        int mirrorBase = (r) * 7;
         if (((occupied >> base) & 0b111111L) == 0b111111L)
             return false;
 
         int row = Long.numberOfTrailingZeros(~((occupied >> base) & 0b111111L));
         long move = 1L << (base + row);
+        long mirrorMove = 1L << (mirrorBase + row);
 
         if (redMove) {
             red |= move;
+            mirrorRed |= mirrorMove;
             if (checkWin(red)) outcome = 1;
             hash ^= redHashes[r * 6 + row];
+            mirrorHash ^= redHashes[(6-r) * 6 + row];
         } else {
             yellow |= move;
+            mirrorYellow |= mirrorMove;
             if (checkWin(yellow)) outcome = -1;
             hash ^= yellowHashes[r * 6 + row];
+            mirrorHash ^= yellowHashes[(6-r) * 6 + row];
         }
         redMove = !redMove;
+        previousMove = r;
         return true;
     }
 
     // undo move
     private void undoMove(int r) {
         int base = (6 - r) * 7;
-
+        int mirrorBase = (r) * 7;
         if (!redMove) { // undo red
             long col = (red >> base) & 0b111111L;
             long top = Long.highestOneBit(col);
             int row = Long.numberOfTrailingZeros(top);
 
+            long mirrorMove = 1L << (mirrorBase + row);
+
             red ^= top << base;
+            mirrorRed ^= mirrorMove;
             hash ^= redHashes[r * 6 + row];
+            mirrorHash ^= redHashes[(6-r) * 6 + row];
         }
         else { // undo yellow
             long col = (yellow >> base) & 0b111111L;
             long top = Long.highestOneBit(col);
             int row = Long.numberOfTrailingZeros(top);
 
+            long mirrorMove = 1L << (mirrorBase + row);
+
             yellow ^= top << base;
+            mirrorYellow ^= mirrorMove;
             hash ^= yellowHashes[r * 6 + row];
+            mirrorHash ^= yellowHashes[(6-r) * 6 + row];
         }
 
         outcome = 0;
@@ -166,7 +191,7 @@ public class Board extends JPanel {
 
 
         g.setColor(Color.BLUE);
-
+        /*/
         g.drawLine(100, 0, 100, 600);
         g.drawLine(200, 0, 200, 600);
         g.drawLine(300, 0, 300, 600);
@@ -180,6 +205,8 @@ public class Board extends JPanel {
         g.drawLine(0, 400, 700, 400);
         g.drawLine(0, 500, 700, 500);
         g.drawLine(0, 600, 700, 600);
+         */
+        g.fillRect(0,0,700,600);
 
         for (int r = 0; r < 7; r++) {
             for (int c = 0; c < 6; c++) {
@@ -191,7 +218,7 @@ public class Board extends JPanel {
                 } else if ((yellow & mask) != 0) {
                     g.setColor(Color.YELLOW);
                 } else {
-                    continue;
+                    g.setColor(Color.WHITE);
                 }
 
                 int x = r * 100;
@@ -294,10 +321,9 @@ public class Board extends JPanel {
         }
     }
     private void botTurn(boolean isRed) {
-        BookEntry bookMove = book.getOrNull(toShallowBookEntry());
-        if (bookMove != null) {
-            System.out.println("BOOK MOVE!");
-            placeTile(bookMove.move);
+        int bookMove = retrieveBookMove(book);
+        if (bookMove != -1) {
+            placeTile(bookMove);
             return;
         }
         int bestMove = -1;
@@ -335,7 +361,7 @@ public class Board extends JPanel {
             return be.confidence;
         }
         if (depth == 0) {
-            return evaluate(isRed); // handcrafted not ending leaf node
+            return evaluate(isRed); // handcrafted non ending leaf node
         }
         List<Integer> legal = legalMoves();
         if (legal.isEmpty()) {
@@ -410,7 +436,7 @@ public class Board extends JPanel {
             if (((occupied >> base) & 0b111111L) != 0b111111L)
                 list.add(i);
         }
-        list.sort(Comparator.comparingInt(a -> Math.abs(3 - a))); //try center first
+        list.sort(Comparator.comparingInt(a -> Math.abs(previousMove - a))); // assume important to address new threats
         return list;
     }
     private float evaluate(boolean isRed) {
@@ -525,15 +551,41 @@ public class Board extends JPanel {
 
         return data;
     }
+    private int retrieveBookMove(Book b) {
+        BookEntry e = b.getOrNull(toShallowBookEntry());
+        if (e == null) return -1;
+        else if (hash < mirrorHash) {
+            return e.move;
+        }
+        else {
+            return 6-e.move;
+        }
+    }
     public BookEntry toShallowBookEntry() {
-        return new BookEntry(hash,red,yellow,0,0,0.0f);
+        if (hash < mirrorHash) {
+            return new BookEntry(hash,red,yellow);
+        } else {
+            return new BookEntry(mirrorHash,mirrorRed,mirrorYellow);
+        }
     }
     public BookEntry toDeepBookEntry(int depth, int move, float confidence) {
-        return new BookEntry(hash,red,yellow,depth, move, confidence);
+        if (hash < mirrorHash) {
+            return new BookEntry(hash,red,yellow,depth,move,confidence);
+        } else {
+            return new BookEntry(mirrorHash,mirrorRed,mirrorYellow,depth,6-move,confidence);
+        }
     }
 
     static AtomicInteger cnt;
     public void generateBook(int toDepth) {
+        Scanner s = new Scanner(System.in);
+        System.out.println("are you sure you want to generate book moves? ");
+        String str = s.next();
+        if (!str.toLowerCase().equals("yes")) {
+            return;
+        }
+        s.close();
+
         cnt = new AtomicInteger();
         bookDepth = toDepth;
         pendingTasks.set(1);
@@ -632,7 +684,11 @@ public class Board extends JPanel {
             // Update alpha for the root level
             alpha = Math.max(alpha, score);
         }
-        return new BookEntry(hash,red,yellow,12,bestMove,bestScore);
+        if (hash < mirrorHash) {
+            return new BookEntry(hash,red,yellow,12,bestMove,bestScore);
+        } else {
+            return new BookEntry(mirrorHash,mirrorRed,mirrorYellow,12,6-bestMove,bestScore);
+        }
     }
     public static void saveWeights() {
         network.write("weights.txt");

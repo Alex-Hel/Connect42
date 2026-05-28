@@ -6,10 +6,10 @@ public class main {
                 new Thread(() -> {
                     System.out.println("Program stopping...");
                     Board.saveWeights();
-                    //Board.saveBook();
-                    System.out.println(((System.currentTimeMillis()-start)/1000)/60 +" Minutes.");
+                    Board.saveBook();
+                    //System.out.println(((System.currentTimeMillis()-start)/1000)/60 +" Minutes.");
                 })
         );
-        b.playAI(true);
+        b.generateBook(6);
     }
 }

@@ -22,7 +22,7 @@ public class Book {
             Scanner s = new Scanner(new File(fileName));
             long n = s.nextLong();
             for (long i=0L; i<n; i++) {
-                BookEntry temp = new BookEntry(s.nextLong(),s.nextLong(),s.nextLong(),s.nextInt(), s.nextInt(), s.nextFloat());
+                BookEntry temp = new BookEntry(s.nextLong(),s.nextLong(),s.nextLong(),s.nextInt());
                 map.put(temp,temp);
             }
         } catch (Exception e) {

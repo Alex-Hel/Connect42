@@ -9,6 +9,12 @@ public class BookEntry {
     int depth;
     int move;
     float confidence;
+    // entry for getting from map
+    public BookEntry(long z, long r, long y) {
+        zobrist=z;
+        red=r;
+        yellow=y;
+    }
     // entry for book moves, already max accuracy
     public BookEntry(long z, long r, long y, int m) {
         zobrist=z;
@@ -36,7 +42,7 @@ public class BookEntry {
     }
     // writes all data to file
     public void write(PrintWriter out) {
-        out.print(zobrist + " " + red + " " + yellow + " " + depth + " " + move + " " + confidence + "\n");
+        out.print(zobrist + " " + red + " " + yellow + " " + move + "\n");
     }
     public String toString() {
         return zobrist + " " + red + " " + yellow + " " + move;
