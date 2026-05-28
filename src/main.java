@@ -5,9 +5,9 @@ public class main {
         Runtime.getRuntime().addShutdownHook(
                 new Thread(() -> {
                     System.out.println("Program stopping...");
-                    Board.saveWeights();
+                    //Board.saveWeights();
                     Board.saveBook();
-                    //System.out.println(((System.currentTimeMillis()-start)/1000)/60 +" Minutes.");
+                    System.out.println(((System.currentTimeMillis()-start)/1000)/60 +" Minutes.");
                 })
         );
         b.generateBook(6);

@@ -60,9 +60,6 @@ public class Board extends JPanel {
         }
     }
 
-    // for move check ordering optimization
-    private int previousMove = 3;
-
     // hold mirror board for pruning
     private long mirrorRed;
     private long mirrorYellow;
@@ -125,7 +122,6 @@ public class Board extends JPanel {
             mirrorHash ^= yellowHashes[(6-r) * 6 + row];
         }
         redMove = !redMove;
-        previousMove = r;
         return true;
     }
 
@@ -436,7 +432,7 @@ public class Board extends JPanel {
             if (((occupied >> base) & 0b111111L) != 0b111111L)
                 list.add(i);
         }
-        list.sort(Comparator.comparingInt(a -> Math.abs(previousMove - a))); // assume important to address new threats
+        list.sort(Comparator.comparingInt(a -> Math.abs(3 - a))); // assume important to address new threats
         return list;
     }
     private float evaluate(boolean isRed) {
@@ -638,7 +634,7 @@ public class Board extends JPanel {
 
         BookEntry entry = toShallowBookEntry();
         if (!book.containsKey(entry)) { // only recurse to finish, don't minimax
-            book.put(entry);
+            //book.put(entry);
             BookEntry temp = getBookEntry(redMove);
             book.put(temp);
         }
@@ -684,11 +680,7 @@ public class Board extends JPanel {
             // Update alpha for the root level
             alpha = Math.max(alpha, score);
         }
-        if (hash < mirrorHash) {
-            return new BookEntry(hash,red,yellow,12,bestMove,bestScore);
-        } else {
-            return new BookEntry(mirrorHash,mirrorRed,mirrorYellow,12,6-bestMove,bestScore);
-        }
+        return toDeepBookEntry(12,bestMove,bestScore);
     }
     public static void saveWeights() {
         network.write("weights.txt");
